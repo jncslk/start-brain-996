@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111114">
+<title>start-brain-996</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: #111114;
+    color: #f2f2f5;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  #setup {
+    min-height: 100%;
+    max-width: 480px;
+    margin: 0 auto;
+    padding: max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom));
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 36px;
+  }
+  h1 {
+    font-size: 1.4rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-align: center;
+    color: #9a9aa3;
+  }
+  label { display: block; }
+  .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 12px;
+    font-size: 1.05rem;
+  }
+  .row output {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    color: #ffd60a;
+  }
+  input[type="range"] {
+    width: 100%;
+    height: 44px;
+    accent-color: #ffd60a;
+    cursor: pointer;
+  }
+  #startBtn {
+    font-size: 1.3rem;
+    font-weight: 700;
+    padding: 18px;
+    border: none;
+    border-radius: 14px;
+    background: #ffd60a;
+    color: #111114;
+    cursor: pointer;
+  }
+  #startBtn:active { transform: scale(0.97); }
+  #play {
+    position: fixed;
+    inset: 0;
+    background: #111114;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: pointer;
+  }
+  #word {
+    font-size: clamp(3rem, 18vw, 9rem);
+    font-weight: 800;
+    letter-spacing: 0.03em;
+  }
+  #timeleft {
+    position: fixed;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    font-size: 1rem;
+    color: #9a9aa3;
+    font-variant-numeric: tabular-nums;
+  }
+  #hint {
+    position: fixed;
+    top: max(20px, env(safe-area-inset-top));
+    font-size: 0.85rem;
+    color: #55555e;
+  }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<main id="setup">
+  <h1>start-brain-996</h1>
+  <label>
+    <span class="row">Duration <output id="durVal"></output></span>
+    <input type="range" id="dur" min="10" max="120" step="5" value="30">
+  </label>
+  <label>
+    <span class="row">New word every <output id="cadVal"></output></span>
+    <input type="range" id="cad" min="0.25" max="2" step="0.05" value="1">
+  </label>
+  <button id="startBtn">Start</button>
+</main>
+
+<div id="play" hidden>
+  <span id="hint">tap to stop</span>
+  <div id="word"></div>
+  <div id="timeleft"></div>
+</div>
+
+<script>
+const COLORS = [
+  { name: "RED",    hex: "#ff453a" },
+  { name: "ORANGE", hex: "#ff9f0a" },
+  { name: "YELLOW", hex: "#ffd60a" },
+  { name: "GREEN",  hex: "#32d74b" },
+  { name: "BLUE",   hex: "#0a84ff" },
+  { name: "PURPLE", hex: "#bf5af2" },
+  { name: "PINK",   hex: "#ff375f" },
+  { name: "WHITE",  hex: "#ffffff" },
+];
+
+const dur = document.getElementById("dur");
+const cad = document.getElementById("cad");
+const durVal = document.getElementById("durVal");
+const cadVal = document.getElementById("cadVal");
+const setup = document.getElementById("setup");
+const play = document.getElementById("play");
+const wordEl = document.getElementById("word");
+const timeleftEl = document.getElementById("timeleft");
+
+function fmtDur(s) {
+  s = Number(s);
+  if (s < 60) return s + " s";
+  const m = Math.floor(s / 60), r = s % 60;
+  return r ? m + " min " + r + " s" : m + " min";
+}
+function syncLabels() {
+  durVal.textContent = fmtDur(dur.value);
+  cadVal.textContent = Number(cad.value).toFixed(2) + " s";
+}
+dur.addEventListener("input", syncLabels);
+cad.addEventListener("input", syncLabels);
+
+try {
+  const saved = JSON.parse(localStorage.getItem("sb996") || "{}");
+  if (saved.dur) dur.value = saved.dur;
+  if (saved.cad) cad.value = saved.cad;
+} catch (e) {}
+syncLabels();
+
+let wordTimer = null;
+let clockTimer = null;
+let endAt = 0;
+let lastWord = null;
+let wakeLock = null;
+let running = false;
+
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+function showWord() {
+  let w;
+  do { w = pick(COLORS); } while (COLORS.length > 1 && w === lastWord);
+  lastWord = w;
+  let ink;
+  do { ink = pick(COLORS); } while (ink.name === w.name);
+  wordEl.textContent = w.name;
+  wordEl.style.color = ink.hex;
+}
+
+function updateClock() {
+  const left = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
+  timeleftEl.textContent = left + " s";
+  if (Date.now() >= endAt) stop();
+}
+
+async function grabWakeLock() {
+  try { wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {}
+}
+
+function start() {
+  localStorage.setItem("sb996", JSON.stringify({ dur: dur.value, cad: cad.value }));
+  running = true;
+  setup.hidden = true;
+  play.hidden = false;
+  endAt = Date.now() + dur.value * 1000;
+  showWord();
+  updateClock();
+  wordTimer = setInterval(showWord, cad.value * 1000);
+  clockTimer = setInterval(updateClock, 200);
+  grabWakeLock();
+}
+
+function stop() {
+  if (!running) return;
+  running = false;
+  clearInterval(wordTimer);
+  clearInterval(clockTimer);
+  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  play.hidden = true;
+  setup.hidden = false;
+}
+
+document.getElementById("startBtn").addEventListener("click", start);
+play.addEventListener("click", stop);
+document.addEventListener("visibilitychange", () => {
+  if (running && document.visibilityState === "visible") grabWakeLock();
+});
+</script>
+</body>
+</html>
