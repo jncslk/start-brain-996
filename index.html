@@ -169,6 +169,7 @@ let wordTimer = null;
 let clockTimer = null;
 let endAt = 0;
 let lastWord = null;
+let lastInk = null;
 let wakeLock = null;
 let running = false;
 
@@ -179,7 +180,8 @@ function showWord() {
   do { w = pick(COLORS); } while (COLORS.length > 1 && w === lastWord);
   lastWord = w;
   let ink;
-  do { ink = pick(COLORS); } while (ink.name === w.name);
+  do { ink = pick(COLORS); } while (ink.name === w.name || ink === lastInk);
+  lastInk = ink;
   wordEl.textContent = w.name;
   wordEl.style.color = ink.hex;
 }
